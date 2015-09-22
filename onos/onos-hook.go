@@ -33,27 +33,22 @@ import (
 )
 
 const (
-	defaultSuffixList    = "_DATA,_CONFIG"
-	suffixListOverride   = "BP_HOOK_DATA_SUFFIX_LIST"
-	defaultPrefixList    = "BP_"
-	prefixListOverride   = "BP_HOOK_DATA_PREFIX_LIST"
-	bluePlanetDataSuffix = "_DATA"
-	defaultOnosUser      = "karaf"
-	defaultOnosPassword  = "karaf"
-	onosUserKey          = "ONOS_USER"
-	onosPasswordKey      = "ONOS_PASSWORD"
-	peerDataKey          = "BP_HOOK_PEER_DATA"
-	peerGroupKey         = "BP_HOOK_PEER_GROUP"
-	peerConfigKey        = "BP_HOOK_PEER_CONFIG"
-	logFileName          = "/bp2/hooks/cluster.log"
-	clusterFileName      = "/bp2/hooks/cluster.json"
-	tabletsFileName      = "/bp2/hooks/tablets.json"
+	defaultSuffixList  = "_DATA,_CONFIG"            // variables that end with these suffixes will be assumed JSON formatted
+	suffixListOverride = "BP_HOOK_DATA_SUFFIX_LIST" // override the default suffix list using env var
+	defaultPrefixList  = "BP_"                      // will gather vars that are prefixed by items in this list
+	prefixListOverride = "BP_HOOK_DATA_PREFIX_LIST" // override default prefix list using env var
+	peerDataKey        = "BP_HOOK_PEER_DATA"        // env var that contains cluster peering data
+	logFileName        = "/bp2/hooks/cluster.log"   // default location to log cluster prcoessing information
+	clusterFileName    = "/bp2/hooks/cluster.json"  // default location for "next" cluster configuration
+	tabletsFileName    = "/bp2/hooks/tablets.json"  // default location for "next" partition configuration
 )
 
-var blackList = []string{suffixListOverride, prefixListOverride}
-var displayOnly = flag.Bool("n", false, "display REST call, but don't actually make it")
-var logToConsole = flag.Bool("c", false, "log to console, not file")
+var blackList = []string{suffixListOverride, prefixListOverride}     // vars not to propagate (collect) from env
+var logToConsole = flag.Bool("c", false, "log to console, not file") // optional log to console instead of file
 
+// getMyIp uses hueristics and guessing to find a usable IP for the current host by iterating over interfaces and
+// addresses assigned to those interfaces until one is found that is "up", not a loopback, nor a broadcast. if no
+// address can be found then return an empty string
 func getMyIP() (string, error) {
 	ifaces, err := net.Interfaces()
 	if err != nil {
@@ -92,6 +87,9 @@ func getMyIP() (string, error) {
 	return "", nil
 }
 
+// interface implementation to sort an array of strings representing IP addresses. sorting is accomplished by
+// comparing octets numberically from left to right. this is used to help generate partition groupings for ONOS's
+// cluster configuration. by ordering them each ONOS instance will calculate the same partition groups
 type ipOrder []string
 
 func (a ipOrder) Len() int {
@@ -114,9 +112,13 @@ func (a ipOrder) Less(i, j int) bool {
 			return false
 		}
 	}
+
+	// all equal is not less
 	return false
 }
 
+// interface implementation to sort an arrary of strings alpha-numerically. this is used to help compare two array for
+// to see if they are equivalent. essentially we are implementing set methods using an array
 type stringOrder []string
 
 func (a stringOrder) Len() int {
@@ -131,6 +133,7 @@ func (a stringOrder) Less(i, j int) bool {
 	return strings.Compare(a[i], a[j]) < 0
 }
 
+// equal determine if two arrays contain the same data
 func equal(a, b []string) bool {
 
 	// If not the same length, then not equal, len of nil == 0
@@ -138,6 +141,7 @@ func equal(a, b []string) bool {
 		return false
 	}
 
+	// Sort the arrays so that we can walk them simultaneouslly checking for equality
 	sort.Sort(stringOrder(a))
 	sort.Sort(stringOrder(b))
 
@@ -152,18 +156,19 @@ func equal(a, b []string) bool {
 
 func main() {
 
+	flag.Parse()
+
+	// Open a log file for appending if they have not requested to log to the console
 	var logfile *os.File
 	if !*logToConsole {
 		var err error
 		logfile, err = os.OpenFile(logFileName, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0644)
 		if err != nil {
-			log.Fatalf("ERROR: Unable to open log file: %s\n", err)
+			log.Fatalf("ERROR: Unable to open log file, exiting: %s\n", err)
 		}
 		defer logfile.Close()
 		log.SetOutput(logfile)
 	}
-
-	flag.Parse()
 
 	// Check to see if the data suffix list is overrider by an environment variable and then convert the given list,
 	// or the default to a string array for checking against later down the code
@@ -171,7 +176,7 @@ func main() {
 	if suffixList == "" {
 		suffixList = defaultSuffixList
 	}
-	log.Printf("overriding data suffix list to '%s'\n", suffixList)
+	log.Printf("INFO: overriding data suffix list to '%s'\n", suffixList)
 
 	// Support both space and comma separated lists
 	suffixes := strings.FieldsFunc(suffixList,
@@ -183,7 +188,7 @@ func main() {
 	if prefixList == "" {
 		prefixList = defaultPrefixList
 	}
-	log.Printf("overriding data prefix list to '%s'\n", prefixList)
+	log.Printf("INFO: overriding data prefix list to '%s'\n", prefixList)
 
 	// Support both space and comma separated lists
 	prefixes := strings.FieldsFunc(prefixList,
@@ -201,80 +206,58 @@ func main() {
 	switch path.Base(os.Args[0]) {
 	case "southbound-update":
 		// Ignore, return 0
-		log.Println("SOUTHBOUND-UPDATE")
+		log.Println("INFO: received SOUTHBOUND-UPDATE")
 	case "heartbeat":
 		// Open the cluster file, and if it is not empty then send what is there to ONOS as a cluster Config. If the
 		// request to ONOS fails, don't fail this process as it is just ONOS likely in some initialization state and
 		// take way to long to get to a point where it will respond
-		log.Println("HEARTBEAT")
+		log.Println("INFO: received HEARTBEAT")
 		return
 	case "peer-status":
 		fallthrough
 	case "peer-update":
-		log.Println("PEER-STATUS | PEER-UPDATE")
+		log.Printf("INFO: received %s\n", strings.ToUpper(path.Base(os.Args[0])))
 
 		if peerData, ok := bpData.(map[string]interface{})[peerDataKey].(map[string]interface{}); !ok {
-			log.Printf("no peer information received from platform, no action taken")
+			log.Printf("INFOI: no peer information received from platform, no action taken")
 		} else {
 			var want []string
 
 			// We want to verify the the new peering information, if it is included in the message, against the existing
 			// cluster information in the ONOS configuration. If it has changed we will need to update ONOS.
 			if b, err := json.MarshalIndent(peerData, "    ", "    "); err == nil {
-				log.Printf("received peer data from the platform:\n%s\n", string(b))
+				log.Printf("INFO: received peer data from the platform:\n    %s\n", string(b))
 			} else {
 				log.Printf("ERROR: unable to decode peer data from platform, curious: %s\n", err)
 			}
 
-			// TODO peerConfig := bpData.(map[string]interface{})[peerConfigKey].(map[string]interface{})
 			peers := peerData["peers"].(map[string]interface{})
 
 			// If the data set does not contain any peers then we will skip this data set
 			if len(peers) == 0 {
-				log.Printf("empty peering list from platform, no update action taken")
+				log.Printf("INFO: empty peering list from platform, no update action taken")
 			} else {
 				peerLeader := strconv.Itoa(int(peerData["leader"].(float64)))
-				log.Printf("peer leader ID is: %s\n", peerLeader)
+				log.Printf("INFO: peer leader ID is: %s\n", peerLeader)
 
 				myIP, err := getMyIP()
 				if err == nil {
 					want = append(want, myIP)
-					log.Printf("append own IP '%s' to desired cluster list\n", myIP)
+					log.Printf("INFO: append own IP '%s' to desired cluster list\n", myIP)
 				} else {
-					log.Println("unable to determine own ID, unable to add it to desired cluster list")
+					log.Println("WARN: unable to determine own ID, unable to add it to desired cluster list")
 				}
 				for _, peer := range peers {
 					// If the IP of the peer is not "me" then add it to the list. We always add ourselves and we don't
 					// wanted it added twice
 					ip := peer.(map[string]interface{})["ip"].(string)
 					if myIP != ip {
-						log.Printf("append peer with IP '%s' to desired cluster list\n", ip)
+						log.Printf("INFO: append peer with IP '%s' to desired cluster list\n", ip)
 						want = append(want, ip)
 					}
 				}
 
-				// for _, peerID := range peerConfig["app_instances"].([]interface{}) {
-				// 	if peer, ok := peers[strconv.Itoa(int(peerID.(float64)))]; ok {
-				// 		want = append(want, peer.(map[string]interface{})["ip"].(string))
-				// 		log.Printf("appending peer '%s' with IP '%s' to desired cluster list\n",
-				// 			strconv.Itoa(int(peerID.(float64))),
-				// 			peer.(map[string]interface{})["ip"].(string))
-				// 	} else {
-				// 		log.
-				// 	}
-				// }
-
-				// Because it is possible / likely that ONOS is not up and running yet and thus will not respond to
-				// REST request, we will write the update to a file that will be picked up during a heartbeat message
-				// and at that point an attempt will be made to update ONOS ... what a pain
-
-				// Construct ONOS JSON payload for cluster update
-				// 		{
-				//     "id": "172.17.0.237",
-				//     "ip": "172.17.0.237",
-				//     "tcpPort": 9876
-				// },
-
+				// Construct object that represents the ONOS cluster information
 				cluster := make(map[string]interface{})
 				var nodes []interface{}
 				for _, ip := range want {
@@ -294,6 +277,14 @@ func main() {
 				ipPrefix = ipPrefix[:idx] + ".*"
 				cluster["ipPrefix"] = ipPrefix
 
+				// Construct object that represents the ONOS partition information. this is created by creating
+				// the same number of partitions as there are ONOS instances in the cluster and then putting N - 1
+				// instances in each partition.
+				//
+				// We sort the list of nodes in the cluster so that each instance will calculate the same partition
+				// table.
+				//
+				// IT IS IMPORTANT THAT EACH INSTANCE HAVE IDENTICAL PARTITION CONFIGURATIONS
 				partitions := make(map[string]interface{})
 				cnt := len(want)
 				sort.Sort(ipOrder(want))
@@ -321,11 +312,14 @@ func main() {
 					"partitions": partitions,
 				}
 
+				// Write the partition table to a known location where it will be picked up by the ONOS "wrapper" and
+				// pushed to ONOS when it is restarted (yes we marshal the data twice, once compact and once with
+				// indentation, not efficient, but i want a pretty log file)
 				if data, err := json.Marshal(tablets); err != nil {
 					log.Printf("ERROR: Unable to encode tables information to write to update file, no file written: %s\n", err)
 				} else {
 					if b, err := json.MarshalIndent(tablets, "    ", "    "); err == nil {
-						log.Printf("writting ONOS tablets information to cluster file '%s'\n%s\n",
+						log.Printf("INFO: writting ONOS tablets information to cluster file '%s'\n    %s\n",
 							tabletsFileName, string(b))
 					}
 					// Open / Create the file with an exclusive lock (only one person can handle this at a time)
@@ -340,18 +334,19 @@ func main() {
 						} else {
 							log.Printf("ERROR: unable to aquire lock to tables file '%s': %s\n", tabletsFileName, err)
 						}
-						syscall.Flock(int(fTablets.Fd()), syscall.LOCK_UN)
-						fTablets.Close()
 					} else {
 						log.Printf("ERROR: unable to open tablets file '%s': %s\n", tabletsFileName, err)
 					}
 				}
 
+				// Write the cluster info to a known location where it will be picked up by the ONOS "wrapper" and
+				// pushed to ONOS when it is restarted (yes we marshal the data twice, once compact and once with
+				// indentation, not efficient, but i want a pretty log file)
 				if data, err := json.Marshal(cluster); err != nil {
 					log.Printf("ERROR: Unable to encode cluster information to write to update file, no file written: %s\n", err)
 				} else {
 					if b, err := json.MarshalIndent(cluster, "    ", "    "); err == nil {
-						log.Printf("writting ONOS cluster information to cluster file '%s'\n%s\n",
+						log.Printf("INFO: writting ONOS cluster information to cluster file '%s'\n    %s\n",
 							clusterFileName, string(b))
 					}
 					// Open / Create the file with an exclusive lock (only one person can handle this at a time)
@@ -366,13 +361,16 @@ func main() {
 						} else {
 							log.Printf("ERROR: unable to aquire lock to cluster file '%s': %s\n", clusterFileName, err)
 						}
-						syscall.Flock(int(fCluster.Fd()), syscall.LOCK_UN)
-						fCluster.Close()
 					} else {
 						log.Printf("ERROR: unable to open cluster file '%s': %s\n", clusterFileName, err)
 					}
 				}
+
+				// Now that we have written the new ("next") cluster configuration files to a known location, kick
+				// the ONOS wrapper so it will do a HARD restart of ONOS, because ONOS needs a HARD reset in order to
+				// come up propperly, silly ONOS
 				client := &http.Client{}
+				log.Println("INFO: kicking ONOS to the curb")
 				if req, err := http.NewRequest("GET", "http://127.0.0.1:4343/reset", nil); err == nil {
 					if _, err := client.Do(req); err != nil {
 						log.Printf("ERROR: unable to restart ONOS: %s\n", err)
@@ -393,6 +391,8 @@ func main() {
 			},
 		})
 
+		// This is a failsafe. I suppose we could just skip the previous and only do the failsafe, but the above is
+		// cleaner
 		if err != nil {
 			fmt.Println("{\"command\":\"peer-join\",\"data\":{}}")
 		} else {

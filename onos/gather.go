@@ -24,7 +24,7 @@ import (
 	"strings"
 )
 
-// hasDataSuffix - returns true if the given string (s) ends in one of the strings specified
+// hasDataSuffix returns true if the given string (s) ends in one of the strings specified
 // as a suffix, else returns false
 func hasDataSuffix(s string, suffixes []string) bool {
 	for _, suffix := range suffixes {
@@ -35,6 +35,8 @@ func hasDataSuffix(s string, suffixes []string) bool {
 	return false
 }
 
+// include returns true if the given string starts with one of the prefixes in the list and thus should be included
+// in the data reaping
 func include(s string, prefixes []string) bool {
 	for _, prefix := range prefixes {
 		if strings.HasPrefix(s, prefix) {
@@ -44,7 +46,7 @@ func include(s string, prefixes []string) bool {
 	return false
 }
 
-// ignore - returns true if the environment variable is essentially in a black list of
+// ignore returns true if the environment variable is essentially in a black list of
 // variables used for configuration and not to be passed to the REST interface
 func ignore(s string, blacklist []string) bool {
 	for _, bad := range blacklist {
@@ -69,11 +71,11 @@ func Gather(config *Config) interface{} {
 	flag.Parse()
 
 	if config.Verbose {
-		log.Printf("GATHER CONFIGURATION\n")
 		if b, err := json.MarshalIndent(config, "    ", "    "); err != nil {
-			log.Printf("  ERROR: unable to marshal config to string: %s\n", err)
+			log.Printf("ERROR: unable to marshal config to string: %s\n", err)
 		} else {
-			log.Println(string(b))
+			log.Printf("INFO: reaping blueplanet information from the environment variables with configuration:\n    %s\n",
+				string(b))
 		}
 	}
 
@@ -88,14 +90,14 @@ func Gather(config *Config) interface{} {
 			// overrides the target URL. The var to override would be BP_HOOK_URL_REDIRECT_<name>. The name
 			// will be the name of the BP hook such as southbound-update, which is also the name of the executable.
 			if config.Verbose {
-				log.Printf("processing environment variable '%s'\n", nv[0])
+				log.Printf("INFO: processing environment variable '%s'\n", nv[0])
 			}
 			if !ignore(nv[0], config.ExcludeList) {
 				if hasDataSuffix(nv[0], config.DataSuffixList) {
 					// If we have a data var then this "should be" string version of a JSON object or array, so lets
 					// convert it to a proper JSON structure.
 					if config.Verbose {
-						log.Printf("processing value of '%s' as JSON data\n", nv[0])
+						log.Printf("INFO: processing value of '%s' as JSON data\n", nv[0])
 					}
 					var obj interface{}
 					if err := json.Unmarshal([]byte(nv[1]), &obj); err != nil {
@@ -110,7 +112,7 @@ func Gather(config *Config) interface{} {
 				}
 			}
 		} else if config.Verbose {
-			log.Printf("ignoring environment variable '%s' because it does not start with prefix '%s'\n",
+			log.Printf("INFO: ignoring environment variable '%s' because it does not start with prefix '%s'\n",
 				nv[0], config.IncludePrefixList)
 		}
 	}

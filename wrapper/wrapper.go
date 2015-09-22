@@ -93,9 +93,9 @@ func startOnos() *exec.Cmd {
 
 	wipe("/tmp", []string{}, []string{})
 
-	// clean("/root/onos/apache-karaf-3.0.3/data", []string{}, []string{})
-	// clean("/root/onos/apache-karaf-3.0.3/instances", []string{}, []string{})
-	// clean("/root/onos/apache-karaf-3.0.3/lock", []string{}, []string{})
+	// wipe("/root/onos/apache-karaf-3.0.3/data", []string{}, []string{})
+	// wipe("/root/onos/apache-karaf-3.0.3/instances", []string{}, []string{})
+	// wipe("/root/onos/apache-karaf-3.0.3/lock", []string{}, []string{})
 
 	// log.Println("SAVING CONFIG")
 	// save := exec.Command("tar", "-P", "-zcf", "/bp2/save/save.tgz", "/root/onos/config/cluster.json", "/root/onos/config/tablets.json")

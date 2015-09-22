@@ -37,4 +37,4 @@ foo:
 	ln -s $(top)onos $(top)src/github.com/ciena/onos
 
 clean:
-	rm -rf docker.img *~ bp2/hooks/onos-hook bp2/hooks/onos-wrapper src
+	rm -rf docker.img *~ bp2/hooks/onos-hook bp2/hooks/onos-wrapper bin pkg src

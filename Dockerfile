@@ -1,6 +1,14 @@
 FROM onosproject/onos:1.3
 MAINTAINER Ciena - BluePlanet <blueplant@ciena.com>
 
+RUN apt-get update && \
+    apt-get install -y curl
+
+RUN mkdir -p /bp2/save && \
+    tar -P -zcf /bp2/save/clean.tgz /root/onos
+
+WORKDIR /root/onos
+
 ENV NBI_onos_port=8181
 ENV NBI_onos_type=http
 ENV NBI_onos_publish=true
@@ -21,5 +29,4 @@ ENV BP2HOOK_heartbeat=/bp2/hooks/heartbeat
 ENV BP2HOOK_peer-update=/bp2/hooks/peer-update
 ENV BP2HOOK_peer-status=/bp2/hooks/peer-status
 
-WORKDIR /root/onos
-ENTRYPOINT ["./bin/onos-service"]
+ENTRYPOINT ["/bp2/hooks/onos-wrapper","./bin/onos-service"]

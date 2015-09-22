@@ -46,7 +46,8 @@ const (
 	peerGroupKey         = "BP_HOOK_PEER_GROUP"
 	peerConfigKey        = "BP_HOOK_PEER_CONFIG"
 	logFileName          = "/bp2/hooks/cluster.log"
-	clusterFileName      = "/bp2/hooks/cluster"
+	clusterFileName      = "/bp2/hooks/cluster.json"
+	tabletsFileName      = "/bp2/hooks/tablets.json"
 )
 
 var blackList = []string{suffixListOverride, prefixListOverride}
@@ -89,6 +90,31 @@ func getMyIP() (string, error) {
 		}
 	}
 	return "", nil
+}
+
+type ipOrder []string
+
+func (a ipOrder) Len() int {
+	return len(a)
+}
+
+func (a ipOrder) Swap(i, j int) {
+	a[i], a[j] = a[j], a[i]
+}
+
+func (a ipOrder) Less(i, j int) bool {
+	// Need to sort IP addresses, we go from left to right sorting octets numerically
+	iIP := net.ParseIP(a[i])
+	jIP := net.ParseIP(a[j])
+
+	for o := 0; o < len(iIP); o++ {
+		if iIP[o] < jIP[o] {
+			return true
+		} else if iIP[o] > jIP[o] {
+			return false
+		}
+	}
+	return false
 }
 
 type stringOrder []string
@@ -181,6 +207,7 @@ func main() {
 		// request to ONOS fails, don't fail this process as it is just ONOS likely in some initialization state and
 		// take way to long to get to a point where it will respond
 		log.Println("HEARTBEAT")
+		return
 		var cluster map[string]interface{}
 		var want, have []string
 		if file, err := os.OpenFile(clusterFileName, os.O_RDONLY, 0644); err == nil {
@@ -205,6 +232,8 @@ func main() {
 			} else {
 				log.Printf("ERROR: failed to obtain exclusive lock on file, ignoring: %s\n", err)
 			}
+			syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+			file.Close()
 		} else {
 			log.Printf("ERROR: failed to open cluster information file: %s\n", err)
 		}
@@ -266,30 +295,44 @@ func main() {
 		if equal(want, have) {
 			log.Println("current and desired cluster information are identical, no update action to ONOS")
 		} else {
-			// Because it is possible / likely that ONOS is not up and running yet and thus will not respond to
-			// REST request
-			log.Println("attempting to update ONOS cluster information via REST")
-
-			if data, err := json.Marshal(cluster); err != nil {
-				log.Printf("ERROR: unable to build encode information, ONOS not updated: %s\n", err)
-			} else {
-				dataReader := strings.NewReader(string(data))
-				if req, err := http.NewRequest("POST", "http://localhost:8181/onos/v1/cluster/configuration", dataReader); err == nil {
-					req.SetBasicAuth(onosUser, onosPassword)
-					if resp, err := (&http.Client{}).Do(req); err != nil {
-						log.Printf("ERROR: HTTP request to update onos failed: %s\n", err)
-					} else {
-						if int(resp.StatusCode/100) == 2 {
-							log.Printf("ONOS successfully updated with desired cluster information: %s\n", resp.Status)
-							// TODO erase cluster file so we don't keep retrying if we don't have an update
-						} else {
-							log.Printf("ERROR: ONOS not updated with desired cluster information: %s\n", resp.Status)
-						}
-					}
-				} else {
-					log.Printf("ERROR: failed to build HTTP request to update ONOS: %s\n", err)
+			if req, err := http.NewRequest("GET", "http://127.0.0.1:4343/reset", nil); err == nil {
+				if _, err := client.Do(req); err != nil {
+					log.Printf("ERROR: unable to restart ONOS: %s\n", err)
 				}
 			}
+
+			// // Because it is possible / likely that ONOS is not up and running yet and thus will not respond to
+			// // REST request
+			// log.Println("attempting to update ONOS cluster information via REST")
+			//
+			// if data, err := json.Marshal(cluster); err != nil {
+			// 	log.Printf("ERROR: unable to build encode information, ONOS not updated: %s\n", err)
+			// } else {
+			// 	dataReader := strings.NewReader(string(data))
+			// 	if req, err := http.NewRequest("POST", "http://localhost:8181/onos/v1/cluster/configuration", dataReader); err == nil {
+			// 		req.SetBasicAuth(onosUser, onosPassword)
+			// 		if resp, err := (&http.Client{}).Do(req); err != nil {
+			// 			log.Printf("ERROR: HTTP request to update onos failed: %s\n", err)
+			// 		} else {
+			// 			if int(resp.StatusCode/100) == 2 {
+			// 				log.Printf("ONOS successfully updated with desired cluster information: %s\n", resp.Status)
+			// 				// TODO erase cluster file so we don't keep retrying if we don't have an update
+			//
+			// 				// Restart ONOS, because ONOS can't really do things correclty in a warm reset
+			// 				log.Printf("HARD reset of ONOS")
+			// 				if req, err := http.NewRequest("GET", "http://127.0.0.1:4343/reset", nil); err == nil {
+			// 					if _, err := client.Do(req); err != nil {
+			// 						log.Printf("ERROR: unable to restart ONOS: %s\n", err)
+			// 					}
+			// 				}
+			// 			} else {
+			// 				log.Printf("ERROR: ONOS not updated with desired cluster information: %s\n", resp.Status)
+			// 			}
+			// 		}
+			// 	} else {
+			// 		log.Printf("ERROR: failed to build HTTP request to update ONOS: %s\n", err)
+			// 	}
+			// }
 		}
 	case "peer-status":
 		fallthrough
@@ -352,11 +395,20 @@ func main() {
 				// and at that point an attempt will be made to update ONOS ... what a pain
 
 				// Construct ONOS JSON payload for cluster update
+				// 		{
+				//     "id": "172.17.0.237",
+				//     "ip": "172.17.0.237",
+				//     "tcpPort": 9876
+				// },
+
 				cluster := make(map[string]interface{})
 				var nodes []interface{}
 				for _, ip := range want {
-					node := make(map[string]string)
-					node["ip"] = ip
+					node := map[string]interface{}{
+						"id":      ip,
+						"ip":      ip,
+						"tcpPort": 9876,
+					}
 					nodes = append(nodes, node)
 				}
 				cluster["nodes"] = nodes
@@ -367,6 +419,59 @@ func main() {
 				idx := strings.LastIndex(ipPrefix, ".")
 				ipPrefix = ipPrefix[:idx] + ".*"
 				cluster["ipPrefix"] = ipPrefix
+
+				partitions := make(map[string]interface{})
+				cnt := len(want)
+				sort.Sort(ipOrder(want))
+
+				size := cnt - 1
+				if size < 3 {
+					size = cnt
+				}
+				for i := 0; i < cnt; i++ {
+					part := make([]map[string]interface{}, size)
+					for j := 0; j < size; j++ {
+						ip := want[(i+j)%cnt]
+						part[j] = map[string]interface{}{
+							"id":      ip,
+							"ip":      ip,
+							"tcpPort": 9876,
+						}
+					}
+					name := fmt.Sprintf("p%d", i+1)
+					partitions[name] = part
+				}
+
+				tablets := map[string]interface{}{
+					"nodes":      nodes,
+					"partitions": partitions,
+				}
+
+				if data, err := json.Marshal(tablets); err != nil {
+					log.Printf("ERROR: Unable to encode tables information to write to update file, no file written: %s\n", err)
+				} else {
+					if b, err := json.MarshalIndent(tablets, "    ", "    "); err == nil {
+						log.Printf("writting ONOS tablets information to cluster file '%s'\n%s\n",
+							tabletsFileName, string(b))
+					}
+					// Open / Create the file with an exclusive lock (only one person can handle this at a time)
+					if file, err := os.OpenFile(tabletsFileName, os.O_RDWR|os.O_CREATE, 0644); err == nil {
+						defer file.Close()
+						if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err == nil {
+							defer syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+							if _, err := file.Write(data); err != nil {
+								log.Printf("ERROR: error writing tablets information to file '%s': %s\n",
+									tabletsFileName, err)
+							}
+						} else {
+							log.Printf("ERROR: unable to aquire lock to tables file '%s': %s\n", tabletsFileName, err)
+						}
+						syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+						file.Close()
+					} else {
+						log.Printf("ERROR: unable to open tablets file '%s': %s\n", tabletsFileName, err)
+					}
+				}
 
 				if data, err := json.Marshal(cluster); err != nil {
 					log.Printf("ERROR: Unable to encode cluster information to write to update file, no file written: %s\n", err)
@@ -387,8 +492,16 @@ func main() {
 						} else {
 							log.Printf("ERROR: unable to aquire lock to cluster file '%s': %s\n", clusterFileName, err)
 						}
+						syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+						file.Close()
 					} else {
 						log.Printf("ERROR: unable to open cluster file '%s': %s\n", clusterFileName, err)
+					}
+				}
+				client := &http.Client{}
+				if req, err := http.NewRequest("GET", "http://127.0.0.1:4343/reset", nil); err == nil {
+					if _, err := client.Do(req); err != nil {
+						log.Printf("ERROR: unable to restart ONOS: %s\n", err)
 					}
 				}
 			}

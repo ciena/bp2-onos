@@ -208,132 +208,6 @@ func main() {
 		// take way to long to get to a point where it will respond
 		log.Println("HEARTBEAT")
 		return
-		var cluster map[string]interface{}
-		var want, have []string
-		if file, err := os.OpenFile(clusterFileName, os.O_RDONLY, 0644); err == nil {
-			defer file.Close()
-			fmt.Printf("cluster file open, '%s'\n", clusterFileName)
-			if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err == nil {
-				defer syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-				fmt.Printf("obtained exclusive lock on cluster file\n")
-				if err := json.NewDecoder(file).Decode(&cluster); err == nil {
-					if b, err := json.MarshalIndent(cluster, "    ", "    "); err != nil {
-						fmt.Printf("decoded information from cluster file:\n%s\n", string(b))
-					} else {
-						fmt.Printf("decoded information from cluster file\n")
-					}
-					nodes := cluster["nodes"].([]interface{})
-					for _, node := range nodes {
-						want = append(want, node.(map[string]interface{})["ip"].(string))
-					}
-				} else {
-					log.Printf("ERROR: failed to decode information from cluster file, ignoring: %s\n", err)
-				}
-			} else {
-				log.Printf("ERROR: failed to obtain exclusive lock on file, ignoring: %s\n", err)
-			}
-			syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-			file.Close()
-		} else {
-			log.Printf("ERROR: failed to open cluster information file: %s\n", err)
-		}
-
-		if len(want) == 0 {
-			log.Println("no information about desired cluster state, no update to ONOS being executed")
-			return
-		}
-
-		log.Printf("desired cluster information detected, attempting to update ONOS: %v\n", want)
-
-		// Attempt to get from ONOS what is current set as the cluster information, so that we will only update
-		// if there is a change
-		onosUser := os.Getenv(onosUserKey)
-		if onosUser == "" {
-			onosUser = defaultOnosUser
-		}
-		onosPassword := os.Getenv(onosPasswordKey)
-		if onosPassword == "" {
-			onosPassword = defaultOnosPassword
-		}
-		log.Printf("authenticating to ONOS with '%s:%s\n", onosUser, onosPassword)
-
-		client := &http.Client{}
-		log.Printf("fetching current cluster information from ONOS\n")
-		if req, err := http.NewRequest("GET", "http://localhost:8181/onos/v1/cluster", nil); err == nil {
-			req.SetBasicAuth(onosUser, onosPassword)
-			if resp, err := client.Do(req); err == nil {
-				defer resp.Body.Close()
-				if int(resp.StatusCode/100) == 2 {
-					log.Printf("received successful HTTP response from ONOS: %s\n", resp.Status)
-					var current map[string]interface{}
-					err = json.NewDecoder(resp.Body).Decode(&current)
-					if err != nil {
-						log.Printf("ERROR: failed to decode response form ONOS, ignoring: %s\n", err)
-					} else {
-						for _, node := range current["nodes"].([]interface{}) {
-							have = append(have, node.(map[string]interface{})["ip"].(string))
-						}
-					}
-				} else {
-					log.Printf("ERROR: received non-success response from ONOS, ignoring: %s\n", resp.Status)
-				}
-			} else {
-				log.Printf("ERROR: failed to retrieve current cluster information from ONOS, ignoring: %s\n", err)
-			}
-		} else {
-			log.Printf("ERROR: failed to build request to ONOS for current cluster information, ignoring: %s\n", err)
-		}
-
-		// If we have nothing then ONOS is not responding
-		if len(have) == 0 {
-			log.Println("unable to retrieve current cluster information from ONOS, no update action to ONOS")
-			return
-		}
-		log.Printf("current cluster information from ONOS: %v\n", have)
-
-		// If want and have are not equal then we need to update ONOS
-		if equal(want, have) {
-			log.Println("current and desired cluster information are identical, no update action to ONOS")
-		} else {
-			if req, err := http.NewRequest("GET", "http://127.0.0.1:4343/reset", nil); err == nil {
-				if _, err := client.Do(req); err != nil {
-					log.Printf("ERROR: unable to restart ONOS: %s\n", err)
-				}
-			}
-
-			// // Because it is possible / likely that ONOS is not up and running yet and thus will not respond to
-			// // REST request
-			// log.Println("attempting to update ONOS cluster information via REST")
-			//
-			// if data, err := json.Marshal(cluster); err != nil {
-			// 	log.Printf("ERROR: unable to build encode information, ONOS not updated: %s\n", err)
-			// } else {
-			// 	dataReader := strings.NewReader(string(data))
-			// 	if req, err := http.NewRequest("POST", "http://localhost:8181/onos/v1/cluster/configuration", dataReader); err == nil {
-			// 		req.SetBasicAuth(onosUser, onosPassword)
-			// 		if resp, err := (&http.Client{}).Do(req); err != nil {
-			// 			log.Printf("ERROR: HTTP request to update onos failed: %s\n", err)
-			// 		} else {
-			// 			if int(resp.StatusCode/100) == 2 {
-			// 				log.Printf("ONOS successfully updated with desired cluster information: %s\n", resp.Status)
-			// 				// TODO erase cluster file so we don't keep retrying if we don't have an update
-			//
-			// 				// Restart ONOS, because ONOS can't really do things correclty in a warm reset
-			// 				log.Printf("HARD reset of ONOS")
-			// 				if req, err := http.NewRequest("GET", "http://127.0.0.1:4343/reset", nil); err == nil {
-			// 					if _, err := client.Do(req); err != nil {
-			// 						log.Printf("ERROR: unable to restart ONOS: %s\n", err)
-			// 					}
-			// 				}
-			// 			} else {
-			// 				log.Printf("ERROR: ONOS not updated with desired cluster information: %s\n", resp.Status)
-			// 			}
-			// 		}
-			// 	} else {
-			// 		log.Printf("ERROR: failed to build HTTP request to update ONOS: %s\n", err)
-			// 	}
-			// }
-		}
 	case "peer-status":
 		fallthrough
 	case "peer-update":
@@ -455,19 +329,19 @@ func main() {
 							tabletsFileName, string(b))
 					}
 					// Open / Create the file with an exclusive lock (only one person can handle this at a time)
-					if file, err := os.OpenFile(tabletsFileName, os.O_RDWR|os.O_CREATE, 0644); err == nil {
-						defer file.Close()
-						if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err == nil {
-							defer syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-							if _, err := file.Write(data); err != nil {
+					if fTablets, err := os.OpenFile(tabletsFileName, os.O_RDWR|os.O_CREATE, 0644); err == nil {
+						defer fTablets.Close()
+						if err := syscall.Flock(int(fTablets.Fd()), syscall.LOCK_EX); err == nil {
+							defer syscall.Flock(int(fTablets.Fd()), syscall.LOCK_UN)
+							if _, err := fTablets.Write(data); err != nil {
 								log.Printf("ERROR: error writing tablets information to file '%s': %s\n",
 									tabletsFileName, err)
 							}
 						} else {
 							log.Printf("ERROR: unable to aquire lock to tables file '%s': %s\n", tabletsFileName, err)
 						}
-						syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-						file.Close()
+						syscall.Flock(int(fTablets.Fd()), syscall.LOCK_UN)
+						fTablets.Close()
 					} else {
 						log.Printf("ERROR: unable to open tablets file '%s': %s\n", tabletsFileName, err)
 					}
@@ -481,19 +355,19 @@ func main() {
 							clusterFileName, string(b))
 					}
 					// Open / Create the file with an exclusive lock (only one person can handle this at a time)
-					if file, err := os.OpenFile(clusterFileName, os.O_RDWR|os.O_CREATE, 0644); err == nil {
-						defer file.Close()
-						if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err == nil {
-							defer syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-							if _, err := file.Write(data); err != nil {
+					if fCluster, err := os.OpenFile(clusterFileName, os.O_RDWR|os.O_CREATE, 0644); err == nil {
+						defer fCluster.Close()
+						if err := syscall.Flock(int(fCluster.Fd()), syscall.LOCK_EX); err == nil {
+							defer syscall.Flock(int(fCluster.Fd()), syscall.LOCK_UN)
+							if _, err := fCluster.Write(data); err != nil {
 								log.Printf("ERROR: error writing cluster information to file '%s': %s\n",
 									clusterFileName, err)
 							}
 						} else {
 							log.Printf("ERROR: unable to aquire lock to cluster file '%s': %s\n", clusterFileName, err)
 						}
-						syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-						file.Close()
+						syscall.Flock(int(fCluster.Fd()), syscall.LOCK_UN)
+						fCluster.Close()
 					} else {
 						log.Printf("ERROR: unable to open cluster file '%s': %s\n", clusterFileName, err)
 					}

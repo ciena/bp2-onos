@@ -2,3 +2,5 @@ docker.img
 src
 bp2/hooks/onos-hook
 bp2/hooks/onos-wrapper
+bin
+pkg

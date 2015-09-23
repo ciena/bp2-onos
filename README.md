@@ -1,5 +1,48 @@
-# Blue Planet ONOS Microservice [![bp onos](http://img.shields.io/badge/blueplanet-microservice-blue.svg)]() [![go](http://img.shields.io/badge/language-go-blue.svg?logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABoAAAAgCAYAAAAMq2gFAAAFcElEQVR4AaWWC0xT5xvGD+AFL/9/BBRxc26JusxFnLq5aRwOL+JEEUwEHDCHCsgFAQuoXLDjgqW0pdQKtIUiVKUtDARKCwW5TLwUEWgRpskiWRYlLk636TRMgWfnNGmDVmgHT/Lm+xo4z++87/ud9xzCnCTcBOsdm9Y7RBzw8is4TZOmxgX302OD+llJ4SJakM+KwH1feyQf/Va2b6drIEEssiIs1f/nOhj3/l5ujoVZcTSFOPNpszQHiioZnj57juGRUaiV1SjLSwX3VDhS40OgljBHE8L9QyyCfLlujXGfEunvXi1Ku6y5dBZ96kJcKBbAoLt374IWGw/68UgoSxjw83KDkEEbKs05GWEW4um2ybCdE3VgjyCfcfz3ulIWblSdQbciD5pr7TCov78foWFh4LIY0NYX4pZCgPO5iYNebi6ulMHK5cveDplv72jYOtCj/BsVVeV4+udjPPvrD/x06wo6SaNa+TkYNDIygqF/XkFZUYIupZCEiXCtkg9uSgSL9LAepyd2xv257NjS+ho5hoeHQUmlUmGT62aIWIlok+egRV2n78/LV8Nob67HjRoBelQifVCZVYvSf6UF+a4lxpOfp7u1t7urp4Qd/7C3uwOURkdHIZPJ4L5rN0oLOBAx4xAf+g0EmdGQ8lP0JaUyGQu6+gMPqccOJpKW02bZ/u91iMu61dPJu2AWs+KhOpeJ661qvCledhreWbgALl+sQk5yCISnYyhjA8QYfY1i5KXHaPy9ttt5u295HbR3x+aF2QkhyD0VAYU4A41SPu70duH+gwcYfHAfne1NYCaFg5MUAjEnCWUCJko4J9BVJzAB6RoK0XSBheD9e7ZS3rNnjcnKe/c2+6yTwZDxk9EgYUKrEqKtgo+OhgvoqJdAU1OAi7kJ5I0cQa+2BxqNBm2K89DVC01AhqzYSWE/k9bzjMd4zlyCWLFsqY3HNhdvevR3V+tLs0aokmj1F+mN9H3oVBTgeiUPytpLqJSfR0tFvqE/JkFd31krwNqVHyYSb5PTAnunFinn6ngGVHQr9XCz0asuAj8j/mWPVvdcKpVJTGA8emSu5lLeqBkjs6Ejs6ImhlhcMiCVSllGwDQbW/361fo1zj/Kub/9F1OqzDdrzhpLbcye/E1aBlC+AEyHbXbCkQpdQ5E5gLEfrXIeuq4oycNTRvYmf8zfRNjwqXO+CcDRwU6/Osyzf1eeR39EnR7zJRKhkJOC7h4tum7egIosl27M80W+QuqItwkY0q8bP1vtU1eciYkyowybpRy0lufiZh3ZE0mOyWFJigzoIMbTB4vf06/Rh7yb+pqKp3Qo2ImhLYQ57ffYuqFVxjWOmslEdmJo64SQ5UuWEGTaTvkZMbht6NUk4nR80PUJQTNnzCA+/+RjO/JboHMq5Us9FlhFmJONtc2chHC/0qlkdMhn5xmzoLmzZ9uyEkO5verJgahJ7vzR0hBCL6uJK8hJDmNOBkQdoMsX2SA9VhEWaFby0YCC25MAUUO1iEuH7nZfpbe3j/OEFKf59jPJIcvutWwcGYO6sdqijL9ZjIyqewMDT9LT0+mEGVlnHg8JbyvnWfIsGUdPlTDtUWiA12HK4BT9++1HI6MWT0jx9QucFkeLCSoXZb0wB6DmYnsFD+yk8ObDvh4b3vQ6ceLk+KDoaBqRXdNnfdB3z5aaooyH1GtASwVpTAU1B6mjf7mMjbTYQ3d2bd7oFbzfc4bxA3GeI2GxwgL2GrYrSoT8wUZVNVma1KFaccYLcmr8Qj4nhVZW0zca/inYbxexwI4CTFJbtm5f+fjJk2f37g0Mkj/XkGFLjNEiR0eCBBJTFoPB8C8rk96PjIyKIsZosdP7Fnv8C0mLBg5RE2QqAAAAAElFTkSuQmCC)]()
+# Blue Planet ONOS Microservice [![bp onos](http://img.shields.io/badge/blueplanet-microservice-blue.svg)]()
 Provides ON.lab's ONOS SDN controller as a blueplanet compatible microservice that supports dynamic scaling utilizing the blueplanet platform solution manager.
 
 ### What it provides?
-This microservice provides basic ONOS as a clusterable microservice and exposes publishes both the ONOS REST API into the blueplant platform environement under then interface name `onos` on port `8181`. Additionally in this repository is a sample blueplanet solution file, `onoscluster.yml` the create a 3 node cluster ONOS deployment. Once started the number of ONOS nodes can be scaled up and down using the blueplanet solution manager command `solution_app_scale`.
+This microservice provides basic ONOS as a cluster-able microservice and exposes publishes both the ONOS REST API into the blueplant platform environement under then interface name `onos` on port `8181`. Additionally in this repository is a sample blueplanet solution file, `onoscluster.yml` the create a 3 node cluster ONOS deployment. Once started the number of ONOS nodes can be scaled up and down using the blueplanet solution manager command `solution_app_scale`.
+
+Also provided in this repository are some shell utility functions in `util.env`. The functions in this file are convenience routines to help access to log files, etc. that are part of the running solution. These may be rather specific to my environment including my docker deployment. If nothing else it may give you hints at things to look at.
+
+### How it works
+This ONOS microservice is based on ONOS 1.3 (drake) release. This release of ONOS does not support dynamic cluster scaling, which is a key feature of the blueplanet platform. As such, something needed to be done to make a version of ONOS that doesn't support dynamic clustering support dynamic clustering.
+
+To accomplish this task two components were build: wrapper and hook.
+
+- **wrapper** - the wrapper is the main process of the microservice [docker] container. this process starts an instance of ONOS and then will update its cluster configuration and kill / restart the ONOS process such that ONOS will accept the updated cluster information.
+- **hook** - the hook is the blueplanet hook function that handles the various messages from the blueplanet platform including `southbound-update`, `heartbeat`, `peer-state`, and `peer-update`. For this solution the the hooks associated with clustering (`heartbeat`, `peer-update`, and `peer-status`) are serviced. when the clustering information (list of IP addresses in the cluster) is updated from the platform the hook writes the new cluster configuration to a known location and then triggers the wrapper to restart the ONOS process.
+
+### Taking it for a drive
+
+#### Building applications
+To build the project just issue the `make all` command. This will build the wrapper and hook applications and then bundle everything into a docker image tagged with the name `cyan/onos:1.3`. The `1.3` represents the version of ONOS on which this is based.
+
+#### Building solution
+To build the solution the blueplanted solmaker is used. How to install this application is documented on the cyan/ciena web sites and so won't be repeated here. In general the command to execute is:
+
+    solmaker build --tag=13 onoscluster.yml
+
+#### Starting the ONOS cluster
+Assuming you already have the blueplant platform installed and running, including the `solutionmanager`, `etcd`, `discod`, and `haproxy`, the next step would be to start the `onoscluster` solution. From the solution manager CLI (`smcli`) simply deploy the solution:
+
+    (Cmd) solution_deploy cyan.onoscluster:13
+
+This will start a 3 node ONOS cluster that will be accessible, both the UI and API, via the haproxy as `http://<haproxy-ip>/onos/...`.
+
+_**Note**_ - _as cluster membership changes the ONOS instances are killed and restarted. This means that it can take seconds or minutes for the cluster to converge and be ready to service requests; depending on the hardware for the docker server._
+
+#### Scaling solution
+To scale the solution, up or down, the solution manager CLI (`smcli`) can be used:
+
+    (Cmd) solution_app_scale cyan.onoscluster:13 bp2-onos <# instances>
+
+The number of instances should be 3 or greater. Thus if you want to scale up the number of instance from the default you specify 5 as the number of the instanes. Once the instances are scaled up, you can scale down by entering a smaller number.
+
+_**Note**_ - _as cluster membership changes the ONOS instances are killed and restarted. This means that it can take seconds or minutes for the cluster to converge and be ready to service requests; depending on the hardware for the docker server._
+
+#### Shutting it down
+To shutdown the cluster you use the service manager CLI (`smcli`) to undeploy the solution:
+
+    (Cmd) solution_undeploy cyan.onoscluster:13

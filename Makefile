@@ -18,7 +18,8 @@ bp2/hooks/onos-hook:
 		go build -o bp2/hooks/onos-hook hook
 
 vendor/src/github.com/davidkbainbridge/jsonq:
-	go get github.com/davidkbainbridge/jsonq
+	GOPATH=$(top)/vendor:$(top) CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+		go get github.com/davidkbainbridge/jsonq
 
 clean:
 	rm -rf docker.img *~ bp2/hooks/onos-hook bp2/hooks/onos-wrapper bin pkg vendor

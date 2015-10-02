@@ -9,31 +9,26 @@ docker.img: bp2/hooks/onos-hook bp2/hooks/onos-wrapper bp2/hooks/onos-service Do
 	docker build --tag=ciena/onos:1.3  .
 	touch docker.img
 
-bp2/hooks/onos-wrapper: src/github.com/ciena/wrapper/wrapper.go
-	GOPATH=$(top):$(top)/vendor CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-		go build -o bp2/hooks/onos-wrapper github.com/ciena/wrapper
+bp2/hooks/onos-wrapper:
+	GOPATH=$(top)/vendor:$(top) CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+		go build -o bp2/hooks/onos-wrapper wrapper
 
-src/github.com/ciena/wrapper/wrapper.go: src/github.com/ciena/wrapper
-
-src/github.com/ciena/wrapper:
-	mkdir -p $(top)/src/github.com/ciena
-	ln -s $(top)wrapper $(top)src/github.com/ciena/wrapper
-
-bp2/hooks/onos-hook: src/github.com/ciena/onos src/github.com/ciena/hook/gather.go src/github.com/ciena/hook/onos-hook.go
-	GOPATH=$(top):$(top)/vendor CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-		go build -o bp2/hooks/onos-hook github.com/ciena/hook
-
-src/github.com/ciena/hook/gather.go: src/github.com/ciena/hook
-
-src/github.com/ciena/hook/onos-hook.go: src/github.com/ciena/hook
-
-src/github.com/ciena/onos:
-	mkdir -p $(top)/src/github.com/ciena
-	ln -s $(top)onos $(top)src/github.com/ciena/onos
-
-src/github.com/ciena/hook:
-	mkdir -p $(top)/src/github.com/ciena/
-	ln -s $(top)hook $(top)src/github.com/ciena/hook
+bp2/hooks/onos-hook:
+	GOPATH=$(top)/vendor:$(top) CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+		go build -o bp2/hooks/onos-hook hook
 
 clean:
-	rm -rf docker.img *~ bp2/hooks/onos-hook bin pkg src
+	rm -rf docker.img *~ bp2/hooks/onos-hook bp2/hooks/onos-wrapper bin pkg
+
+bp2/hooks/onos-wrapper: \
+	src/wrapper/wrapper.go \
+	src/onos/onos.go \
+	src/onos/stringset.go \
+	src/onos/util.go
+
+bp2/hooks/onos-hook: \
+	src/hook/gather.go \
+	src/hook/onos-hook.go \
+	src/onos/onos.go \
+	src/onos/stringset.go \
+	src/onos/util.go

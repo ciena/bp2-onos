@@ -29,7 +29,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/ciena/onos"
+	"onos"
 )
 
 const (

@@ -21,15 +21,15 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"path"
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"unicode"
+
+	"github.com/ciena/onos"
 )
 
 const (
@@ -46,93 +46,6 @@ const (
 var blackList = []string{suffixListOverride, prefixListOverride}     // vars not to propagate (collect) from env
 var logToConsole = flag.Bool("c", false, "log to console, not file") // optional log to console instead of file
 
-// getMyIp uses hueristics and guessing to find a usable IP for the current host by iterating over interfaces and
-// addresses assigned to those interfaces until one is found that is "up", not a loopback, nor a broadcast. if no
-// address can be found then return an empty string
-func getMyIP() (string, error) {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return "", err
-	}
-
-	for _, iface := range ifaces {
-		if iface.Flags&net.FlagUp == 0 {
-			continue // down
-		}
-		if iface.Flags&(net.FlagLoopback) != 0 {
-			continue // broadcast or loopback
-		}
-		addrs, err := iface.Addrs()
-		if err != nil {
-			return "", err
-		}
-		var ip net.IP
-		for _, addr := range addrs {
-			switch v := addr.(type) {
-			case *net.IPNet:
-				ip = v.IP
-			case *net.IPAddr:
-				ip = v.IP
-			}
-
-			if ip == nil || ip.IsLoopback() || ip.IsMulticast() {
-				continue
-			}
-			if ip.To4() == nil {
-				continue // not v4
-			}
-			return ip.String(), nil
-		}
-	}
-	return "", nil
-}
-
-// interface implementation to sort an array of strings representing IP addresses. sorting is accomplished by
-// comparing octets numberically from left to right. this is used to help generate partition groupings for ONOS's
-// cluster configuration. by ordering them each ONOS instance will calculate the same partition groups
-type ipOrder []string
-
-func (a ipOrder) Len() int {
-	return len(a)
-}
-
-func (a ipOrder) Swap(i, j int) {
-	a[i], a[j] = a[j], a[i]
-}
-
-func (a ipOrder) Less(i, j int) bool {
-	// Need to sort IP addresses, we go from left to right sorting octets numerically
-	iIP := net.ParseIP(a[i])
-	jIP := net.ParseIP(a[j])
-
-	for o := 0; o < len(iIP); o++ {
-		if iIP[o] < jIP[o] {
-			return true
-		} else if iIP[o] > jIP[o] {
-			return false
-		}
-	}
-
-	// all equal is not less
-	return false
-}
-
-// interface implementation to sort an arrary of strings alpha-numerically. this is used to help compare two array for
-// to see if they are equivalent. essentially we are implementing set methods using an array
-type stringOrder []string
-
-func (a stringOrder) Len() int {
-	return len(a)
-}
-
-func (a stringOrder) Swap(i, j int) {
-	a[i], a[j] = a[j], a[i]
-}
-
-func (a stringOrder) Less(i, j int) bool {
-	return strings.Compare(a[i], a[j]) < 0
-}
-
 // equal determine if two arrays contain the same data
 func equal(a, b []string) bool {
 
@@ -142,8 +55,8 @@ func equal(a, b []string) bool {
 	}
 
 	// Sort the arrays so that we can walk them simultaneouslly checking for equality
-	sort.Sort(stringOrder(a))
-	sort.Sort(stringOrder(b))
+	sort.Sort(onos.AlphaOrder(a))
+	sort.Sort(onos.AlphaOrder(b))
 
 	for i := 0; i < len(a); i = i + 1 {
 		if strings.Compare(a[i], b[i]) != 0 {
@@ -240,7 +153,7 @@ func main() {
 				peerLeader := strconv.Itoa(int(peerData["leader"].(float64)))
 				log.Printf("INFO: peer leader ID is: %s\n", peerLeader)
 
-				myIP, err := getMyIP()
+				myIP, err := onos.GetMyIP()
 				if err == nil {
 					want = append(want, myIP)
 					log.Printf("INFO: append own IP '%s' to desired cluster list\n", myIP)
@@ -257,115 +170,117 @@ func main() {
 					}
 				}
 
-				// Construct object that represents the ONOS cluster information
-				cluster := make(map[string]interface{})
-				var nodes []interface{}
-				for _, ip := range want {
-					node := map[string]interface{}{
-						"id":      ip,
-						"ip":      ip,
-						"tcpPort": 9876,
-					}
-					nodes = append(nodes, node)
-				}
-				cluster["nodes"] = nodes
-				leader := peerData["peers"].(map[string]interface{})[peerLeader].(map[string]interface{})
-
-				// Calculate the prefix by stripping off the last octet and replacing with a wildcard
-				ipPrefix := leader["ip"].(string)
-				idx := strings.LastIndex(ipPrefix, ".")
-				ipPrefix = ipPrefix[:idx] + ".*"
-				cluster["ipPrefix"] = ipPrefix
-
-				// Construct object that represents the ONOS partition information. this is created by creating
-				// the same number of partitions as there are ONOS instances in the cluster and then putting N - 1
-				// instances in each partition.
-				//
-				// We sort the list of nodes in the cluster so that each instance will calculate the same partition
-				// table.
-				//
-				// IT IS IMPORTANT THAT EACH INSTANCE HAVE IDENTICAL PARTITION CONFIGURATIONS
-				partitions := make(map[string]interface{})
-				cnt := len(want)
-				sort.Sort(ipOrder(want))
-
-				size := cnt - 1
-				if size < 3 {
-					size = cnt
-				}
-				for i := 0; i < cnt; i++ {
-					part := make([]map[string]interface{}, size)
-					for j := 0; j < size; j++ {
-						ip := want[(i+j)%cnt]
-						part[j] = map[string]interface{}{
+				onos.WriteClusterConfig(want)
+				/*
+					// Construct object that represents the ONOS cluster information
+					cluster := make(map[string]interface{})
+					var nodes []interface{}
+					for _, ip := range want {
+						node := map[string]interface{}{
 							"id":      ip,
 							"ip":      ip,
 							"tcpPort": 9876,
 						}
+						nodes = append(nodes, node)
 					}
-					name := fmt.Sprintf("p%d", i+1)
-					partitions[name] = part
-				}
+					cluster["nodes"] = nodes
+					leader := peerData["peers"].(map[string]interface{})[peerLeader].(map[string]interface{})
 
-				tablets := map[string]interface{}{
-					"nodes":      nodes,
-					"partitions": partitions,
-				}
+					// Calculate the prefix by stripping off the last octet and replacing with a wildcard
+					ipPrefix := leader["ip"].(string)
+					idx := strings.LastIndex(ipPrefix, ".")
+					ipPrefix = ipPrefix[:idx] + ".*"
+					cluster["ipPrefix"] = ipPrefix
 
-				// Write the partition table to a known location where it will be picked up by the ONOS "wrapper" and
-				// pushed to ONOS when it is restarted (yes we marshal the data twice, once compact and once with
-				// indentation, not efficient, but i want a pretty log file)
-				if data, err := json.Marshal(tablets); err != nil {
-					log.Printf("ERROR: Unable to encode tables information to write to update file, no file written: %s\n", err)
-				} else {
-					if b, err := json.MarshalIndent(tablets, "    ", "    "); err == nil {
-						log.Printf("INFO: writting ONOS tablets information to cluster file '%s'\n    %s\n",
-							tabletsFileName, string(b))
+					// Construct object that represents the ONOS partition information. this is created by creating
+					// the same number of partitions as there are ONOS instances in the cluster and then putting N - 1
+					// instances in each partition.
+					//
+					// We sort the list of nodes in the cluster so that each instance will calculate the same partition
+					// table.
+					//
+					// IT IS IMPORTANT THAT EACH INSTANCE HAVE IDENTICAL PARTITION CONFIGURATIONS
+					partitions := make(map[string]interface{})
+					cnt := len(want)
+					sort.Sort(onos.IPOrder(want))
+
+					size := cnt - 1
+					if size < 3 {
+						size = cnt
 					}
-					// Open / Create the file with an exclusive lock (only one person can handle this at a time)
-					if fTablets, err := os.OpenFile(tabletsFileName, os.O_RDWR|os.O_CREATE, 0644); err == nil {
-						defer fTablets.Close()
-						if err := syscall.Flock(int(fTablets.Fd()), syscall.LOCK_EX); err == nil {
-							defer syscall.Flock(int(fTablets.Fd()), syscall.LOCK_UN)
-							if _, err := fTablets.Write(data); err != nil {
-								log.Printf("ERROR: error writing tablets information to file '%s': %s\n",
-									tabletsFileName, err)
+					for i := 0; i < cnt; i++ {
+						part := make([]map[string]interface{}, size)
+						for j := 0; j < size; j++ {
+							ip := want[(i+j)%cnt]
+							part[j] = map[string]interface{}{
+								"id":      ip,
+								"ip":      ip,
+								"tcpPort": 9876,
+							}
+						}
+						name := fmt.Sprintf("p%d", i+1)
+						partitions[name] = part
+					}
+
+					tablets := map[string]interface{}{
+						"nodes":      nodes,
+						"partitions": partitions,
+					}
+
+					// Write the partition table to a known location where it will be picked up by the ONOS "wrapper" and
+					// pushed to ONOS when it is restarted (yes we marshal the data twice, once compact and once with
+					// indentation, not efficient, but i want a pretty log file)
+					if data, err := json.Marshal(tablets); err != nil {
+						log.Printf("ERROR: Unable to encode tables information to write to update file, no file written: %s\n", err)
+					} else {
+						if b, err := json.MarshalIndent(tablets, "    ", "    "); err == nil {
+							log.Printf("INFO: writting ONOS tablets information to cluster file '%s'\n    %s\n",
+								tabletsFileName, string(b))
+						}
+						// Open / Create the file with an exclusive lock (only one person can handle this at a time)
+						if fTablets, err := os.OpenFile(tabletsFileName, os.O_RDWR|os.O_CREATE, 0644); err == nil {
+							defer fTablets.Close()
+							if err := syscall.Flock(int(fTablets.Fd()), syscall.LOCK_EX); err == nil {
+								defer syscall.Flock(int(fTablets.Fd()), syscall.LOCK_UN)
+								if _, err := fTablets.Write(data); err != nil {
+									log.Printf("ERROR: error writing tablets information to file '%s': %s\n",
+										tabletsFileName, err)
+								}
+							} else {
+								log.Printf("ERROR: unable to aquire lock to tables file '%s': %s\n", tabletsFileName, err)
 							}
 						} else {
-							log.Printf("ERROR: unable to aquire lock to tables file '%s': %s\n", tabletsFileName, err)
+							log.Printf("ERROR: unable to open tablets file '%s': %s\n", tabletsFileName, err)
 						}
-					} else {
-						log.Printf("ERROR: unable to open tablets file '%s': %s\n", tabletsFileName, err)
 					}
-				}
 
-				// Write the cluster info to a known location where it will be picked up by the ONOS "wrapper" and
-				// pushed to ONOS when it is restarted (yes we marshal the data twice, once compact and once with
-				// indentation, not efficient, but i want a pretty log file)
-				if data, err := json.Marshal(cluster); err != nil {
-					log.Printf("ERROR: Unable to encode cluster information to write to update file, no file written: %s\n", err)
-				} else {
-					if b, err := json.MarshalIndent(cluster, "    ", "    "); err == nil {
-						log.Printf("INFO: writting ONOS cluster information to cluster file '%s'\n    %s\n",
-							clusterFileName, string(b))
-					}
-					// Open / Create the file with an exclusive lock (only one person can handle this at a time)
-					if fCluster, err := os.OpenFile(clusterFileName, os.O_RDWR|os.O_CREATE, 0644); err == nil {
-						defer fCluster.Close()
-						if err := syscall.Flock(int(fCluster.Fd()), syscall.LOCK_EX); err == nil {
-							defer syscall.Flock(int(fCluster.Fd()), syscall.LOCK_UN)
-							if _, err := fCluster.Write(data); err != nil {
-								log.Printf("ERROR: error writing cluster information to file '%s': %s\n",
-									clusterFileName, err)
+					// Write the cluster info to a known location where it will be picked up by the ONOS "wrapper" and
+					// pushed to ONOS when it is restarted (yes we marshal the data twice, once compact and once with
+					// indentation, not efficient, but i want a pretty log file)
+					if data, err := json.Marshal(cluster); err != nil {
+						log.Printf("ERROR: Unable to encode cluster information to write to update file, no file written: %s\n", err)
+					} else {
+						if b, err := json.MarshalIndent(cluster, "    ", "    "); err == nil {
+							log.Printf("INFO: writting ONOS cluster information to cluster file '%s'\n    %s\n",
+								clusterFileName, string(b))
+						}
+						// Open / Create the file with an exclusive lock (only one person can handle this at a time)
+						if fCluster, err := os.OpenFile(clusterFileName, os.O_RDWR|os.O_CREATE, 0644); err == nil {
+							defer fCluster.Close()
+							if err := syscall.Flock(int(fCluster.Fd()), syscall.LOCK_EX); err == nil {
+								defer syscall.Flock(int(fCluster.Fd()), syscall.LOCK_UN)
+								if _, err := fCluster.Write(data); err != nil {
+									log.Printf("ERROR: error writing cluster information to file '%s': %s\n",
+										clusterFileName, err)
+								}
+							} else {
+								log.Printf("ERROR: unable to aquire lock to cluster file '%s': %s\n", clusterFileName, err)
 							}
 						} else {
-							log.Printf("ERROR: unable to aquire lock to cluster file '%s': %s\n", clusterFileName, err)
+							log.Printf("ERROR: unable to open cluster file '%s': %s\n", clusterFileName, err)
 						}
-					} else {
-						log.Printf("ERROR: unable to open cluster file '%s': %s\n", clusterFileName, err)
 					}
-				}
-
+				*/
 				// Now that we have written the new ("next") cluster configuration files to a known location, kick
 				// the ONOS wrapper so it will do a HARD restart of ONOS, because ONOS needs a HARD reset in order to
 				// come up propperly, silly ONOS
@@ -380,7 +295,7 @@ func main() {
 		}
 
 		// Return join message always, not the best form, but lets face it the platform should know
-		myIP, err := getMyIP()
+		myIP, err := onos.GetMyIP()
 		if err != nil {
 			myIP = "0.0.0.0"
 		}

@@ -17,13 +17,21 @@
 package main
 
 import (
+	"crypto/tls"
+	"encoding/json"
 	"io"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
+
+	"github.com/ciena/onos"
+	"github.com/davidkbainbridge/jsonq"
 )
 
 const (
@@ -35,6 +43,10 @@ const (
 	partitionFileName   = "/bp2/hooks/tablets.json"
 	onosPartitionConfig = "/root/onos/config/tablets.json"
 	serveOnAddr         = "127.0.0.1:4343"
+	kubeCreds           = "vagrant:vagrant"
+	kubeOnosSelector    = "name in (onos)"
+	httpTimeout         = "5s"
+	maxErrorCount       = 10
 )
 
 // echo take what is ever on one reader and write it to the writer
@@ -170,6 +182,144 @@ func startOnos() *exec.Cmd {
 	return onos
 }
 
+// watchPods watches updates from kubernetes and updates the cluster information (and kicks onos) when membership
+// changes.
+func watchPods(kube string) {
+
+	cluster := onos.StringSet{}
+	// The set in the cluster will always include myself.
+	ip, err := onos.GetMyIP()
+	if err != nil {
+		// add loopback, may not be the best solution
+		cluster.Add("127.0.0.1")
+	} else {
+		cluster.Add(ip)
+	}
+
+	// We are going to use a SSL transport with verification turned off
+	timeout, err := time.ParseDuration(httpTimeout)
+	if err != nil {
+		log.Printf("ERROR: unable to parse default HTTP timeout of '%s', will default to no timeout\n", httpTimeout)
+	}
+	tr := &http.Transport{
+		TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
+		TLSHandshakeTimeout:   timeout,
+		ResponseHeaderTimeout: timeout,
+	}
+	client := &http.Client{
+		Transport: tr,
+		Timeout:   timeout,
+	}
+
+	log.Printf("INFO: fetch cluster information from 'https://%s@%s/api/v1/namespaces/default/pods?labelSelector=%s'\n",
+		kubeCreds, kube, url.QueryEscape(kubeOnosSelector))
+
+	resp, err := client.Get("https://" + kubeCreds + "@" + kube + "/api/v1/namespaces/default/pods?labelSelector=" + url.QueryEscape(kubeOnosSelector))
+	if err != nil {
+		log.Fatalf("ERROR: Unable to communciate to kubernetes to maintain cluster information: %s\n", err)
+	}
+
+	var data map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&data)
+	if err != nil {
+		log.Fatalf("ERROR: Unable to parse response back from kubernetes: %s\n", err)
+	}
+
+	// Populate the cluster set with the base from the query
+	jq := jsonq.NewQuery(data)
+	items, err := jq.Array("items")
+	if err != nil {
+		log.Printf("ERROR: Unexpected response from kubernetes: %s\n", err)
+	} else {
+		modified := false
+		for _, item := range items {
+			jq = jsonq.NewQuery(item)
+			ip, err = jq.String("status.podIP")
+			if err == nil {
+				if !cluster.Contains(ip) {
+					cluster.Add(ip)
+					modified = true
+				}
+			}
+		}
+		if modified {
+			onos.WriteClusterConfig(cluster.Array())
+		} else {
+			log.Println("INFO: no modification of cluster information based on update from kubernetes")
+		}
+	}
+
+	log.Printf("INFO: base set of cluster members is %v\n", cluster.Array())
+
+	b, _ := json.MarshalIndent(data, "", "    ")
+	log.Printf("DEBUG: %s\n", string(b))
+
+	errCount := 0
+	client.Timeout = 0
+	for {
+		resp, err = client.Get("https://" + kubeCreds + "@" + kube + "/api/v1/namespaces/default/pods?labelSelector=" + url.QueryEscape(kubeOnosSelector) + "&watch=true")
+		if err != nil {
+			errCount++
+			if errCount > maxErrorCount {
+				log.Fatalf("ERROR: Too many errors (%d) while attempting to communicate with kubernetes: %s", errCount, err)
+			}
+		} else {
+			// Worked, reset error count
+			errCount = 0
+
+			decoder := json.NewDecoder(resp.Body)
+			if err != nil {
+				errCount++
+				if errCount > maxErrorCount {
+					log.Fatalf("ERROR: Too many errors (%d) while attempting to communicate with kubernetes: %s", errCount, err)
+				}
+			} else {
+				// Worked, reset error count
+				errCount = 0
+
+				for {
+					var data map[string]interface{}
+					err := decoder.Decode(&data)
+					if err == nil {
+						b, _ := json.MarshalIndent(data, "", "    ")
+						log.Printf("DEBUG: retrieved: %v\n", string(b))
+						jq := jsonq.NewQuery(data)
+						ip, err = jq.String("object.status.podIP")
+						if err == nil {
+							modified := false
+							log.Printf("IP: (%s) %s == %s\n", jq.AsString("type"), jq.AsString("object.metadata.name"),
+								jq.AsString("object.status.podIP"))
+							switch jq.AsString("type") {
+							case "DELETED":
+								if cluster.Contains(ip) {
+									cluster.Remove(ip)
+									modified = true
+								}
+							case "MODIFIED":
+								fallthrough
+							case "ADDED":
+								if !cluster.Contains(ip) {
+									cluster.Add(ip)
+									modified = true
+								}
+							}
+							if modified {
+								onos.WriteClusterConfig(cluster.Array())
+							} else {
+								log.Println("INFO: no modification of cluster information based on update from kubernetes")
+							}
+						} else {
+							log.Printf("ERROR COULD NOT FIND IP: %s\n", err)
+						}
+					} else {
+						log.Printf("ERROR: unable to decode %s\n", err)
+					}
+				}
+			}
+		}
+	}
+}
+
 func main() {
 
 	log.Printf("INFO: starting ONOS with command '%s' and arguments '%v'\n", os.Args[1], os.Args[2:])
@@ -188,9 +338,15 @@ func main() {
 
 	// register a handler for the /reset REST call. this will kill the ONOS process which will automatically restart
 	http.HandleFunc("/reset", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("INFO: killing ONOS process '%d'\n", onos.Process.Pid)
-		if err := onos.Process.Kill(); err != nil {
-			log.Printf("ERROR: failed to kill ONOS process, bad things about to happen: %s\n", err)
+		if onos.Process.Pid != 0 {
+			log.Printf("INFO: killing ONOS process '%d'\n", onos.Process.Pid)
+			if err := onos.Process.Kill(); err != nil {
+				log.Printf("ERROR: failed to kill ONOS process, bad things about to happen: %s\n", err)
+			} else {
+				onos.Process.Pid = 0
+			}
+		} else {
+			log.Println("INFO: ONOS already dead, nothing to kill")
 		}
 	})
 
@@ -203,6 +359,31 @@ func main() {
 		log.Println("INFO: halting ONOS wrapper")
 		os.Exit(0)
 	})
+
+	// if we can get an IP and port for the kubernetes API so we can monitor the cluster member changes then start
+	// a routine to monitor them. We will first attempt to resolve kubernetes as this is the recommended method, if
+	// that fails then we will try to environment variables. If that fails, assume not running in kubernetes
+	// environment.
+	var kube string
+	addrs, err := net.LookupHost("kubernetes")
+	if err == nil && len(addrs) > 0 {
+		// Take the first address
+		kube = addrs[0]
+	} else {
+		log.Printf("INFO: unable to resolve the service name 'kubernetes', will check environment for link: %s\n",
+			err)
+		// Unable to resolve, attempt environment variables
+		kube = os.Getenv("KUBERNETES_SERVICE_HOST")
+		log.Printf("INFO: found KUBERNETES_SERVICE_HOST in environment as '%s'\n", kube)
+	}
+
+	if kube != "" {
+		log.Printf("INFO: resolved 'kubernetes' service to '%s', will monitor pod instances to cluster membership\n",
+			kube)
+		go watchPods(kube)
+	} else {
+		log.Println("INFO: cannot resolve 'kubernetes' service, assuming instance not part of a kubernetes deployment")
+	}
 
 	log.Printf("INFO: listen and serve REST requests on '%s'\n", serveOnAddr)
 	log.Fatalf("ERROR: failed to start API server on '%s': %s\n", serveOnAddr, http.ListenAndServe(serveOnAddr, nil))
